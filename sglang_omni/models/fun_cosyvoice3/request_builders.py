@@ -8,6 +8,7 @@ import json
 import threading
 import time
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, TypedDict
@@ -19,6 +20,7 @@ from numpy.typing import NDArray
 from sglang.srt.managers.schedule_batch import Req
 from sglang.srt.sampling.sampling_params import SamplingParams
 
+from sglang_omni.models.fun_cosyvoice3.mps_lock import mps_step_context
 from sglang_omni.models.fun_cosyvoice3.payload_types import FunCosyVoice3State
 from sglang_omni.models.fun_cosyvoice3.streaming import build_cosyvoice3_stream_metadata
 from sglang_omni.preprocessing.cache_key import hash_bytes as _hash_bytes
@@ -405,6 +407,7 @@ class CosyVoice3PreprocessingContext:
         CosyVoice3StoredReference,
     ]
     stream: torch.cuda.Stream | None
+    mps_step_context: AbstractContextManager[None]
 
 
 _PREPROCESSING_CONTEXT: CosyVoice3PreprocessingContext | None = None
@@ -447,6 +450,7 @@ def set_cosyvoice3_preprocessing_context(
                 log_prefix="Fun-CosyVoice3",
             ),
             stream=stream,
+            mps_step_context=mps_step_context(device),
         )
         _PREPARED_REQUESTS.clear()
 
@@ -854,7 +858,8 @@ def preprocess_cosyvoice3_payload(payload: StagePayload) -> StagePayload:
     else:
         pass
 
-    with _PREPROCESSING_FINALIZE_LOCK:
+    # note (j20120307): the prompt embedding lookups run on the AR model's device; on Torch MPS they take the shared turn before the finalize lock.
+    with context.mps_step_context, _PREPROCESSING_FINALIZE_LOCK:
         prepared = prepare_cosyvoice3_request(
             model=context.model,
             tokenizer=context.tokenizer,

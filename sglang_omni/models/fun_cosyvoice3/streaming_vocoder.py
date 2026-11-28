@@ -928,12 +928,14 @@ class FunCosyVoice3StreamingVocoderScheduler(
             prompt_token = as_flow_prompt_token(pipeline_state.flow_prompt_speech_token)
             prompt_feat = as_flow_prompt_feat(pipeline_state.flow_prompt_speech_feat)
             embedding = as_flow_embedding(pipeline_state.flow_embedding)
-        return self.vocoder.token2wav(
-            token=codes.unsqueeze(0),
-            prompt_token=prompt_token,
-            prompt_feat=prompt_feat,
-            embedding=embedding,
-        )
+        # note (j20120307): outside the vocoder's stream context, so on Torch MPS the decode takes the shared turn here.
+        with self.vocoder.mps_step_context:
+            return self.vocoder.token2wav(
+                token=codes.unsqueeze(0),
+                prompt_token=prompt_token,
+                prompt_feat=prompt_feat,
+                embedding=embedding,
+            )
 
     def final_result_data(
         self,

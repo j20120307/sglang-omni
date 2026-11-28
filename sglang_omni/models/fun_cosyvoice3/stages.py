@@ -66,6 +66,7 @@ from sglang_omni.models.fun_cosyvoice3.flow_estimator_trt import (
 )
 from sglang_omni.models.fun_cosyvoice3.hift_channels_last import ChannelsLastHiftDecode
 from sglang_omni.models.fun_cosyvoice3.hift_cuda_graph import HiftDecodeCudaGraphRunner
+from sglang_omni.models.fun_cosyvoice3.mps_lock import mps_step_context
 from sglang_omni.models.fun_cosyvoice3.packed_dit import (
     CONV_CONTEXT_FRAMES,
     DIT_INDUCTOR_OPTIONS,
@@ -1906,6 +1907,8 @@ class CosyVoice3Vocoder(BatchVocoderBase[FunCosyVoice3State, torch.Tensor]):
         # queue behind the AR's. It waits once for what the default stream holds at
         # this point.
         device = next(self.flow.parameters()).device
+        # note (j20120307): on Torch MPS the AR and preprocessing threads of this process encode work on the same device, so every vocoder step takes the shared turn.
+        self.mps_step_context = mps_step_context(device)
         if device.type == "cuda":
             stream = torch.cuda.Stream(device=device)
             stream.wait_stream(torch.cuda.current_stream(device))
@@ -1928,7 +1931,7 @@ class CosyVoice3Vocoder(BatchVocoderBase[FunCosyVoice3State, torch.Tensor]):
                 torch.cuda.Event() for _ in range(2)
             ]
         else:
-            self.stream_context = contextlib.nullcontext()
+            self.stream_context = self.mps_step_context
             self.has_hift_kernels = False
             self.copy_done_events = []
         self.copy_done_slot: int = 0
